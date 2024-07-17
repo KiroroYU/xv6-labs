@@ -92,6 +92,7 @@ int             fork(void);
 int             growproc(int);
 pagetable_t     proc_pagetable(struct proc *);
 void            proc_freepagetable(pagetable_t, uint64);
+void            proc_free_kernel_pagetable(uint64, pagetable_t);
 int             kill(int);
 struct cpu*     mycpu(void);
 struct cpu*     getmycpu(void);
@@ -108,6 +109,8 @@ void            yield(void);
 int             either_copyout(int user_dst, uint64 dst, void *src, uint64 len);
 int             either_copyin(void *dst, int user_src, uint64 src, uint64 len);
 void            procdump(void);
+//added
+void            proc_kvminithart(pagetable_t );
 
 // swtch.S
 void            swtch(struct context*, struct context*);
@@ -178,6 +181,12 @@ uint64          walkaddr(pagetable_t, uint64);
 int             copyout(pagetable_t, uint64, char *, uint64);
 int             copyin(pagetable_t, char *, uint64, uint64);
 int             copyinstr(pagetable_t, char *, uint64, uint64);
+void            vmprint(pagetable_t);
+//added
+pagetable_t     proc_kpt_init();
+void            proc_kvmmmap(pagetable_t, uint64 , uint64 , uint64 , int );
+void            free_proc_kpt(pagetable_t pagetable);
+void            u2k_vmcopy(pagetable_t, pagetable_t, uint64 , uint64 );
 
 // plic.c
 void            plicinit(void);

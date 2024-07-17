@@ -5,6 +5,7 @@
 #include "spinlock.h"
 #include "proc.h"
 #include "defs.h"
+//added
 
 struct cpu cpus[NCPU];
 
@@ -20,6 +21,8 @@ static void wakeup1(struct proc *chan);
 static void freeproc(struct proc *p);
 
 extern char trampoline[]; // trampoline.S
+extern char etext[]; 
+extern pagetable_t kernelpt;
 
 // initialize the proc table at boot time.
 void
@@ -34,12 +37,12 @@ procinit(void)
       // Allocate a page for the process's kernel stack.
       // Map it high in memory, followed by an invalid
       // guard page.
-      char *pa = kalloc();
-      if(pa == 0)
-        panic("kalloc");
-      uint64 va = KSTACK((int) (p - proc));
-      kvmmap(va, (uint64)pa, PGSIZE, PTE_R | PTE_W);
-      p->kstack = va;
+      // char *pa = kalloc();
+      // if(pa == 0)
+      //   panic("kalloc");
+      // uint64 va = KSTACK((int) (p - proc));
+      // kvmmap(va, (uint64)pa, PGSIZE, PTE_R | PTE_W);
+      // p->kstack = va;
   }
   kvminithart();
 }
@@ -121,6 +124,16 @@ found:
     return 0;
   }
 
+  // ljg add 
+  // An empty kernel page table.
+  p->kpt = proc_kpt_init();
+  char *pa = kalloc();
+  if(pa == 0)
+    panic("kalloc");
+  uint64 va = KSTACK((int) (p - proc));
+  proc_kvmmmap(p->kpt, va, (uint64)pa, PGSIZE, PTE_R | PTE_W);
+  p->kstack = va;
+
   // Set up new context to start executing at forkret,
   // which returns to user space.
   memset(&p->context, 0, sizeof(p->context));
@@ -142,6 +155,13 @@ freeproc(struct proc *p)
   if(p->pagetable)
     proc_freepagetable(p->pagetable, p->sz);
   p->pagetable = 0;
+  if(p->kstack){
+    uvmunmap(p->kpt, p->kstack, 1, 1);
+    }
+  p->kstack = 0;
+  // 释放内核页表
+  free_proc_kpt(p->kpt);
+  p->kpt = 0;
   p->sz = 0;
   p->pid = 0;
   p->parent = 0;
@@ -220,6 +240,9 @@ userinit(void)
   // and data into it.
   uvminit(p->pagetable, initcode, sizeof(initcode));
   p->sz = PGSIZE;
+  //added
+  // 复制一份到内核页表
+  u2k_vmcopy(p->pagetable, p->kpt, 0, p->sz);
 
   // prepare for the very first "return" from kernel to user.
   p->trapframe->epc = 0;      // user program counter
@@ -243,9 +266,16 @@ growproc(int n)
 
   sz = p->sz;
   if(n > 0){
+    //added
+    if(PGROUNDUP(sz+n) >= PLIC){
+      return -1;
+    }
     if((sz = uvmalloc(p->pagetable, sz, sz + n)) == 0) {
       return -1;
     }
+    //added
+    //复制一份到内核页表
+    u2k_vmcopy(p->pagetable, p->kpt, sz - n, sz);
   } else if(n < 0){
     sz = uvmdealloc(p->pagetable, sz, sz + n);
   }
@@ -274,6 +304,9 @@ fork(void)
     return -1;
   }
   np->sz = p->sz;
+
+  //added
+  u2k_vmcopy(np->pagetable, np->kpt, 0, np->sz);
 
   np->parent = p;
 
@@ -473,7 +506,13 @@ scheduler(void)
         // before jumping back to us.
         p->state = RUNNING;
         c->proc = p;
+        // swtch(&c->context, &p->context);
+        // 加载进程的内核页表到核心的satp寄存器
+        proc_kvminithart(p->kpt);
         swtch(&c->context, &p->context);
+        
+        // ljg add Come back to the global kernel page table
+        kvminithart();
 
         // Process is done running for now.
         // It should have changed its p->state before coming back.
@@ -696,4 +735,10 @@ procdump(void)
     printf("%d %s %s", p->pid, state, p->name);
     printf("\n");
   }
+}
+
+void
+proc_kvminithart(pagetable_t kpt){
+  w_satp(MAKE_SATP(kpt));
+  sfence_vma();
 }
